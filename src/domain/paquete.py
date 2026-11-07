@@ -2,51 +2,61 @@ from .guia_rastreo import GuiaRastreo
 from .estado_envio import EstadoEnvio
 from .evidencia_recepcion import EvidenciaRecepcion
 
+# Excepciones de Dominio Personalizadas
+class EvidenciaObligatoriaException(Exception):
+    pass
+
+class TercerIntentoNoAutorizadoException(Exception):
+    pass
+
+class TransicionEstadoInvalidaException(Exception):
+    pass
+
 class Paquete:
-    def __init__(self, guia: GuiaRastreo, destino: str, tarifa: float):
+    def __init__(self, guia: GuiaRastreo, destino: str, tarifa: float, peso: float = 1.0, dimensiones: float = 1.0):
+        if peso <= 0 or dimensiones <= 0:
+            raise ValueError("Excepción de validación: Peso y dimensiones deben ser mayores a cero.")
+        
         self.guia = guia
         self.destino = destino
         self.tarifa = tarifa
+        self.peso = peso
+        self.dimensiones = dimensiones
         self.estado = EstadoEnvio.RECIBIDO
         self.intentos_fallidos = 0
         self.evidencia = None
 
-    def marcar_clasificado(self):
-        if self.estado != EstadoEnvio.RECIBIDO:
-            raise ValueError("El paquete debe estar Recibido para ser Clasificado.")
-        self.estado = EstadoEnvio.CLASIFICADO
-
-    def marcar_en_transito(self):
-        if self.estado != EstadoEnvio.CLASIFICADO:
-            raise ValueError("El paquete debe estar Clasificado para ponerse En Tránsito.")
-        self.estado = EstadoEnvio.EN_TRANSITO
-
-    def marcar_centro_destino(self):
-        if self.estado != EstadoEnvio.EN_TRANSITO:
-            raise ValueError("El paquete debe estar En Tránsito para llegar al Centro Destino.")
-        self.estado = EstadoEnvio.CENTRO_DESTINO
-
     def marcar_en_reparto(self):
-        if self.estado not in [EstadoEnvio.CENTRO_DESTINO, EstadoEnvio.SEGUNDO_INTENTO_PENDIENTE]:
-            raise ValueError("El paquete no está listo para reparto local.")
+        if self.estado in [EstadoEnvio.RECHAZADO_EN_PROCESO_DE_DEVOLUCION, EstadoEnvio.ENTREGADO]:
+            raise TransicionEstadoInvalidaException("No se puede mover a reparto un paquete cancelado o ya entregado.")
         self.estado = EstadoEnvio.EN_REPARTO
 
     def finalizar_entrega(self, evidencia: EvidenciaRecepcion):
+        if self.estado in [EstadoEnvio.RECHAZADO_EN_PROCESO_DE_DEVOLUCION]:
+            raise TransicionEstadoInvalidaException("Transición de estado inválida: el paquete está cancelado.")
+        
         if self.estado != EstadoEnvio.EN_REPARTO:
-            raise ValueError("El paquete debe estar En Reparto para finalizar la entrega.")
+            raise TransicionEstadoInvalidaException("El paquete debe estar En Reparto para finalizar la entrega.")
+        
         if evidencia is None:
-            raise ValueError("BR012: El estado Entregado está bloqueado si no se proporciona evidencia de recepción.")
+            raise EvidenciaObligatoriaException("BR012: Evidencia obligatoria faltante.")
+        
         self.evidencia = evidencia
         self.estado = EstadoEnvio.ENTREGADO
 
-    def registrar_destinatario_ausente(self):
+    def registrar_destinatario_ausente(self, autorizado_por_supervisor: bool = False):
         if self.estado != EstadoEnvio.EN_REPARTO:
-            raise ValueError("Solo se puede registrar ausencia durante el reparto.")
+            raise TransicionEstadoInvalidaException("Solo se puede registrar ausencia durante el reparto.")
+
         self.intentos_fallidos += 1
-        if self.intentos_fallidos in [1, 2]:
+
+        if self.intentos_fallidos < 3:
             self.estado = EstadoEnvio.SEGUNDO_INTENTO_PENDIENTE
         else:
-            raise ValueError("BR014: Un tercer intento por destinatario ausente requiere autorización explícita de un supervisor.")
+            if autorizado_por_supervisor:
+                self.estado = EstadoEnvio.RETENIDO_EN_SUCURSAL # CP-06
+            else:
+                raise TercerIntentoNoAutorizadoException("BR014: Tercer intento requiere autorización.") # CP-05
 
     def registrar_rechazo(self):
         self.estado = EstadoEnvio.RECHAZADO_EN_PROCESO_DE_DEVOLUCION

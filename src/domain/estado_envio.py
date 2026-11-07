@@ -9,3 +9,4 @@ class EstadoEnvio(Enum):
     ENTREGADO = "Entregado"
     SEGUNDO_INTENTO_PENDIENTE = "SegundoIntentoPendiente"
     RECHAZADO_EN_PROCESO_DE_DEVOLUCION = "Rechazado - En proceso de devolución"
+    RETENIDO_EN_SUCURSAL = "Retenido en sucursal"
